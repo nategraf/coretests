@@ -5,10 +5,14 @@ namespace ConsoleApplication
 {
     public class Program
     {
-        const int NumThreads = 2;
+        static int NumThreads = 2;
 
         public static void Main(string[] args)
         {
+            if(args.Length >= 1)
+            {
+                NumThreads = Convert.ToInt32(args[0]);
+            }
             Console.WriteLine($"Starting {NumThreads} threads.");
 
             Task[] workers = new Task[NumThreads];
@@ -31,8 +35,12 @@ namespace ConsoleApplication
 
             while(true)
             {
-                object o = new object();
-                GC.KeepAlive(o);
+                for(int i=0; i<10000; i++)
+                {
+                    object o = new object();
+                    GC.KeepAlive(o);
+                }
+                System.Threading.Thread.Sleep(0);
             }
         }
     }
