@@ -40,7 +40,7 @@ namespace eventpipe_onoff
             int iteration = 1;
             while(true)
             {
-                string outputFile = string.Format("/home/brianrob/cli/config_api/file-{0}.netperf", iteration);
+                string outputFile = string.Format("/home/brianrob/src/coretests/eventpipe_onoff/file-{0}.netperf", iteration);
                 object configurationObject = CreateConfiguration(SPC, outputFile);
                 if(configurationObject == null)
                 {
