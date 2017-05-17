@@ -7,6 +7,7 @@ namespace EventPipe
     {
         private ConstructorInfo m_configurationCtor;
         private MethodInfo m_enableProviderMethod;
+        private MethodInfo m_setProfilerSamplingRateMethod;
 
         private object m_configurationObject;
 
@@ -50,6 +51,12 @@ namespace EventPipe
 
         public void SetSamplingRate(TimeSpan minDelayBetweenSamples)
         {
+            m_setProfilerSamplingRateMethod.Invoke(
+                m_configurationObject,
+                new object[]
+                {
+                    minDelayBetweenSamples
+                });
         }
 
         private bool Initialize()
@@ -85,6 +92,15 @@ namespace EventPipe
            if(m_enableProviderMethod == null)
            {
                Console.WriteLine("enableProviderMethod == null");
+               return false;
+           }
+
+           m_setProfilerSamplingRateMethod = configurationType.GetMethod(
+               "SetProfilerSamplingRate",
+               BindingFlags.NonPublic | BindingFlags.Instance);
+           if(m_setProfilerSamplingRateMethod == null)
+           {
+               Console.WriteLine("setProfilerSamplingRate == null");
                return false;
            }
 
