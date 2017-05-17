@@ -2,6 +2,11 @@ syntax: glob
 
 [Bb]inaries/
 
+# Trace files
+*.netperf
+*.sync.netperf
+*.PerfView.json
+
 # Local SDK
 sdk/
 
