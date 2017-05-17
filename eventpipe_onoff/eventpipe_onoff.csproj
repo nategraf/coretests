@@ -5,5 +5,8 @@
     <TargetFramework>netcoreapp2.0</TargetFramework>
     <RuntimeFrameworkVersion>2.0.0-beta-001697-00</RuntimeFrameworkVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../tracecontrol_api/tracecontrol_api.csproj" />
+  </ItemGroup>
 
 </Project>
