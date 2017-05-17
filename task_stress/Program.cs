@@ -89,7 +89,6 @@ namespace task_stress
         {
             new Action(Allocate),
             new Action(Spin),
-            new Action(Lock)
         };
 
         public static void Allocate()
@@ -106,15 +105,6 @@ namespace task_stress
             for(int i=0; i<1000; i++)
             {
                 s.SpinOnce();
-            }
-        }
-
-        private static object s_lock = new object();
-        public static void Lock()
-        {
-            lock(s_lock)
-            {
-                Allocate();
             }
         }
     }
