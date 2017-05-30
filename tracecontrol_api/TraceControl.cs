@@ -10,6 +10,11 @@ namespace EventPipe
 
         public static void EnableDefault()
         {
+            EnableDefault(TimeSpan.FromMilliseconds(1));
+        }
+
+        public static void EnableDefault(TimeSpan profSampleDelay)
+        {
             // Set the output file to be in the current working directory.
             string outputFile = "default.netperf";
 
@@ -40,6 +45,9 @@ namespace EventPipe
 
             // Enable the provider.
             config.EnableProvider(providerName, keywords, level);
+
+            // Set the sampling rate.
+            config.SetSamplingRate(profSampleDelay);
 
             // Enable tracing.
             Enable(config);
