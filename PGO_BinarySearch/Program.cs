@@ -33,7 +33,7 @@ namespace PGO_BinarySearch
             Log("End: Build Module List");
 
             // Find the latest run.
-            CurrentRunIndex = GetLastRunIndex() + 1;
+            CurrentRunIndex = 1;
             Log($"Set current run index to {CurrentRunIndex}.");
 
             // If last run index != 1, get the serialized args.
@@ -84,21 +84,14 @@ namespace PGO_BinarySearch
 
                 // Compile the LTCG set.
                 Log("Start: Compile LTCG modules.");
-                foreach(string ltcgFile in ltcgFiles)
-                {
-                    CompileWithLTCG(ltcgFile);
-                }
+                CompileWithLTCG(ltcgFiles.ToArray());
                 Log("End: Compile LTCG modules.");
 
                 // Compile and Link the rest of the binary with PGO.
                 Log("Start: Compile the remaining modules with PGO.");
-                ProcessStartInfo linkStartInfo = new ProcessStartInfo();
+                ProcessStartInfo linkStartInfo = CreateProcessStartInfo();
                 linkStartInfo.FileName = "cmd.exe";
-                linkStartInfo.Arguments = $"/s /c \" \"{VCVarsAll}\" {VCArch} && \"link.exe\" @link.rsp /UseProfile:PGD=coreclr.pgd";
-                linkStartInfo.WorkingDirectory = CurrentReproDirectory;
-                linkStartInfo.CreateNoWindow = true;
-                linkStartInfo.RedirectStandardOutput = true;
-                linkStartInfo.RedirectStandardError = true;
+                linkStartInfo.Arguments = $"/s /c \" \"{VCVarsAll}\" {VCArch} &&  \"link.exe\" @link.rsp /UseProfile:PGD=coreclr.pgd\"";
 
                 int exitCode;
                 if ((exitCode = Execute(linkStartInfo)) != 0)
@@ -109,7 +102,7 @@ namespace PGO_BinarySearch
 
                 // Copy coreclr.dll into the test bed.
                 Log("Start: Update coreclr.dll in testbed.");
-                File.Copy(Path.Combine(CurrentReproDirectory, "coreclr.dll"), Path.Combine(CoreRootPath, "coreclr.dll"));
+                File.Copy(Path.Combine(CurrentReproDirectory, "coreclr.dll"), Path.Combine(CoreRootPath, "coreclr.dll"), true);
                 Log("End: Update coreclr.dll in testbed.");
 
                 // Run the test multiple times.
@@ -133,6 +126,8 @@ namespace PGO_BinarySearch
                     Log("Mark failure.");
                     moduleList.MarkFail();
                 }
+
+                CurrentRunIndex++;
             }
         }
 
@@ -149,33 +144,37 @@ namespace PGO_BinarySearch
             return Convert.ToInt32(lastPath);
         }
 
-        private static void CompileWithLTCG(string fileName)
+        private static void CompileWithLTCG(string[] fileNames)
         {
-            // Prepend the full path.
-            string filePath = Path.Combine(CurrentReproDirectory, fileName);
 
-            // link.exe /cvtcil {srcObj} /out:{destObj}
-            string destFilePath = Path.Combine(Path.GetDirectoryName(filePath), "temp.obj");
-
-            ProcessStartInfo linkStartInfo = new ProcessStartInfo();
-            linkStartInfo.FileName = "cmd.exe";
-            linkStartInfo.Arguments = $"/s /c \" \"{VCVarsAll}\" {VCArch} && \"link.exe\" /cvtcil \"{filePath}\" /out:\"{destFilePath}\"";
-            linkStartInfo.WorkingDirectory = CurrentReproDirectory;
-            linkStartInfo.CreateNoWindow = true;
-            linkStartInfo.RedirectStandardOutput = true;
-            linkStartInfo.RedirectStandardError = true;
-
-            int exitCode;
-            if((exitCode = Execute(linkStartInfo)) != 0)
+            StringBuilder builder = new StringBuilder();
+            for(int i=0; i<fileNames.Length; i++)
             {
-                throw new InvalidOperationException($"Link command failed.  Exit code: {exitCode}");
+                // Prepend the full path.
+                string filePath = Path.Combine(CurrentReproDirectory, fileNames[i]);
+
+                // link.exe /cvtcil {srcObj} /out:{destObj}
+                string destFilePath = Path.Combine(Path.GetDirectoryName(filePath), "temp.obj");
+
+                builder.Append($"\"link.exe\" /cvtcil \"{filePath}\" /out:\"{destFilePath}\" && copy /Y \"{destFilePath}\" \"{filePath}\" && del \"{destFilePath}\" && ");
+
+                if((i%20 == 0) || ((i+1) == fileNames.Length))
+                {
+                    builder.Append("echo \"Batch complete.\"");
+
+                    ProcessStartInfo linkStartInfo = CreateProcessStartInfo();
+                    linkStartInfo.FileName = "cmd.exe";
+                    linkStartInfo.Arguments = $"/s /c \" \"{VCVarsAll}\" {VCArch} && {builder.ToString()}";
+
+                    int exitCode;
+                    if ((exitCode = Execute(linkStartInfo)) != 0)
+                    {
+                        throw new InvalidOperationException($"Link command failed.  Exit code: {exitCode}");
+                    }
+
+                    builder.Clear();
+                }
             }
-
-            // move {destObj} {srcObj}
-            File.Copy(destFilePath, filePath, true);
-
-            // del {destObj}
-            File.Delete(destFilePath);
         }
 
         private static int Execute(ProcessStartInfo startInfo)
@@ -195,29 +194,40 @@ namespace PGO_BinarySearch
 
         private static bool ExecuteTests()
         {
-            int numTasks = 5;
-            Task[] testTasks = new Task[numTasks];
-            for (int i = 0; i < numTasks; i++)
+            bool testPassed = true;
+            for (int i = 0; i < 10; i++)
             {
-                testTasks[i] = new Task(TestWorker);
-                testTasks[i].Start();
-            }
-            Task.WaitAll(testTasks);
+                Log($"Running test iteration {i}.");
 
-            for (int i = 0; i < numTasks; i++)
-            {
-                if (testTasks[i].IsFaulted)
+                // Run the test.
+                TestWorker();
+
+                // Check for dumps.
+                string[] crashDumps = Directory.GetFiles("c:\\crashes");
+                testPassed = (crashDumps.Length == 0);
+                foreach (string dump in crashDumps)
                 {
-                    return false;
+                    File.Copy(dump, Path.Combine(CurrentReproDirectory, Path.GetFileName(dump)));
+                    File.Delete(dump);
+                }
+
+                if(!testPassed)
+                {
+                    break;
                 }
             }
 
-            return true;
+            return testPassed;
         }
 
         private static void TestWorker()
         {
-            // TODO
+            ProcessStartInfo startInfo = CreateProcessStartInfo();
+            startInfo.FileName = "cmd.exe";
+            startInfo.Arguments = $"/s /c \" c:\\work\\procdump.exe -ma -n 1 -e 1 -g -f C0000005.ACCESS_VIOLATION -x c:\\crashes c:\\work\\test_bed\\tests\\core_root\\corerun.exe C:\\Work\\test_bed\\GC\\Features\\SustainedLowLatency\\sustainedlowlatency_race\\sustainedlowlatency_race.exe \"";
+
+            Execute(startInfo);
+
         }
 
         private static void Log(string message, params object[] args)
@@ -234,6 +244,15 @@ namespace PGO_BinarySearch
             {
                 writer.Write("\n");
             }
+        }
+
+        private static ProcessStartInfo CreateProcessStartInfo()
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.UseShellExecute = false;
+            startInfo.WorkingDirectory = CurrentReproDirectory;
+
+            return startInfo;
         }
     }
 }
