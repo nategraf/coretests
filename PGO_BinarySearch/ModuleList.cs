@@ -14,11 +14,16 @@ namespace PGO_BinarySearch
         private int _startIndex;
         private int _endIndex;
         private int _testIndex;
+        private int _lastRoundIndex = -1;
 
-        public ModuleList(string[] modules)
+        public ModuleList(string reproDirectoryPath)
         {
-            _sortedModules = new string[modules.Length];
-            Array.Copy(modules, _sortedModules, _sortedModules.Length);
+            _sortedModules = Directory.GetFiles(reproDirectoryPath, "*.obj");
+            for(int i=0; i<_sortedModules.Length; i++)
+            {
+                _sortedModules[i] = Path.GetFileName(_sortedModules[i]);
+            }
+            Array.Sort(_sortedModules);
             _startIndex = 0;
             _endIndex = _sortedModules.Length - 1;
             _testIndex = (_startIndex + _endIndex) / 2;
@@ -28,9 +33,16 @@ namespace PGO_BinarySearch
         {
             get
             {
-                for (int i = _startIndex; i < _testIndex; i++)
+                if (_startIndex == _testIndex)
                 {
-                    yield return _sortedModules[i];
+                    yield return _sortedModules[_startIndex];
+                }
+                else
+                {
+                    for (int i = _startIndex; i < _testIndex; i++)
+                    {
+                        yield return _sortedModules[i];
+                    }
                 }
             }
         }
@@ -43,7 +55,11 @@ namespace PGO_BinarySearch
                 {
                     yield return _sortedModules[i];
                 }
-                for (int i = _testIndex; i < _sortedModules.Length; i++)
+                if (_startIndex != _testIndex)
+                {
+                    yield return _sortedModules[_testIndex];
+                }
+                for (int i = _testIndex + 1; i < _sortedModules.Length; i++)
                 {
                     yield return _sortedModules[i];
                 }
@@ -52,45 +68,81 @@ namespace PGO_BinarySearch
 
         public void MarkPass()
         {
-            _endIndex = _testIndex;
+            CheckBlame(true);
             Next();
         }
 
         public void MarkFail()
         {
-            _startIndex = _testIndex;
+            CheckBlame(false);
             Next();
         }
 
         private void Next()
         {
-            if (_startIndex > _endIndex)
-            {
-                throw new Exception("Search operation complete!");
-            }
             _testIndex = (_startIndex + _endIndex) / 2;
         }
 
-        public void WriteDebugLog(string pathToDebugLog)
+        private void CheckBlame(bool prevSuccess)
         {
-            using (StreamWriter writer = new StreamWriter(pathToDebugLog))
+            if (_lastRoundIndex != -1)
             {
-                WriteDebugLog(writer);
+                int badIndex = 0;
+                if(prevSuccess)
+                {
+                    badIndex = _startIndex;
+                }
+                else
+                {
+                    badIndex = _lastRoundIndex;
+                }
+                throw new Exception(string.Format("Bad module: {0}", _sortedModules[badIndex]));
+            }
+            else
+            {
+                if ((_startIndex == _testIndex) && prevSuccess)
+                {
+                    throw new Exception(string.Format("Bad module: {0}", _sortedModules[_startIndex]));
+                }
+                else if ((_startIndex == _testIndex) && !prevSuccess)
+                {
+                    _lastRoundIndex = _startIndex;
+                    _startIndex = _endIndex;
+                }
+                else
+                {
+                    if(prevSuccess)
+                    {
+                        _endIndex = _testIndex;
+                    }
+                    else
+                    {
+                        _startIndex = _testIndex;
+                    }
+                }
             }
         }
 
-        public void WriteDebugLog(TextWriter writer)
+        public void WriteDebugLog(string currentReproPath, string pathToDebugLog)
+        {
+            using (StreamWriter writer = new StreamWriter(pathToDebugLog))
+            {
+                WriteDebugLog(currentReproPath, writer);
+            }
+        }
+
+        public void WriteDebugLog(string currentReproPath, TextWriter writer)
         {
             writer.WriteLine("LTCG modules:");
             foreach (string module in LTCGModules)
             {
-                writer.WriteLine("\t" + module);
+                writer.WriteLine("\t" + Path.Combine(currentReproPath, module));
             }
 
             writer.WriteLine("\n\nPGU modules:");
             foreach (string module in PGUModules)
             {
-                writer.WriteLine("\t" + module);
+                writer.WriteLine("\t" + Path.Combine(currentReproPath, module));
             }
         }
 

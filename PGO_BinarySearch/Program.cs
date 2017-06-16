@@ -13,7 +13,8 @@ namespace PGO_BinarySearch
     {
         public const string CleanReproPath = @"c:\work\clean_repro";
         public const string WritableReproPath = @"c:\work\repro_results";
-        public const string TestBedPath = @"";
+        public const string TestBedPath = @"c:\work\test_bed";
+        public static readonly string CoreRootPath = Path.Combine(TestBedPath, "tests\\core_root");
         public const string DebugLogFileName = "_DebugLog.txt";
         public const string RunParamsFileName = "_RunParams.txt";
         public const string SuccessMarkerFileName = "_Result_Success.txt";
@@ -21,17 +22,19 @@ namespace PGO_BinarySearch
         public static int CurrentRunIndex = 0;
         public static string CurrentReproDirectory = null;
 
+        public const string VCVarsAll = "C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\vcvarsall.bat";
+        public const string VCArch = "x86_amd64";
+
         static void Main(string[] args)
         {
             // Build the module list.
             Log("Start: Build Module List");
-            string[] modules = Directory.GetFiles(CleanReproPath, "*.obj");
-            ModuleList moduleList = new ModuleList(modules);
+            ModuleList moduleList = new ModuleList(CleanReproPath);
             Log("End: Build Module List");
 
             // Find the latest run.
             CurrentRunIndex = GetLastRunIndex() + 1;
-            Console.WriteLine("Set current run index.");
+            Log($"Set current run index to {CurrentRunIndex}.");
 
             // If last run index != 1, get the serialized args.
             if(CurrentRunIndex > 1)
@@ -57,6 +60,7 @@ namespace PGO_BinarySearch
                 // Make a copy of the repro and give it a unique name (monotonically increasing).
                 CurrentReproDirectory = Path.Combine(WritableReproPath, CurrentRunIndex.ToString());
                 Log("Start: Create new repro directory '{0}'.", CurrentReproDirectory);
+                Directory.CreateDirectory(CurrentReproDirectory);
                 foreach (string srcFile in Directory.GetFiles(CleanReproPath))
                 {
                     File.Copy(srcFile, Path.Combine(CurrentReproDirectory, Path.GetFileName(srcFile)));
@@ -64,15 +68,15 @@ namespace PGO_BinarySearch
                 Log("End: Create new repro directory '{0}'.", CurrentReproDirectory);
 
                 // Dump the run params.
-                string runParamsPath = Path.Combine(WritableReproPath, RunParamsFileName);
+                string runParamsPath = Path.Combine(CurrentReproDirectory, RunParamsFileName);
                 Log("Start: Save run parameters.");
                 moduleList.WriteState(runParamsPath);
                 Log("End: Save run parameters.");
 
-                // Dump the list of files that were compiled.
-                string moduleListLogPath = Path.Combine(WritableReproPath, DebugLogFileName);
+                // Dump the list of files that will be compiled.
+                string moduleListLogPath = Path.Combine(CurrentReproDirectory, DebugLogFileName);
                 Log("Start: Write module list to '{0}'.", moduleListLogPath);
-                moduleList.WriteDebugLog(moduleListLogPath);
+                moduleList.WriteDebugLog(CurrentReproDirectory, moduleListLogPath);
                 Log("End: Write module list to '{0}'.", moduleListLogPath);
 
                 // Decide which files to compile using LTCG.
@@ -88,20 +92,27 @@ namespace PGO_BinarySearch
 
                 // Compile and Link the rest of the binary with PGO.
                 Log("Start: Compile the remaining modules with PGO.");
-                ProcessStartInfo linkStartInfo = new ProcessStartInfo("link.exe")
+                ProcessStartInfo linkStartInfo = new ProcessStartInfo();
+                linkStartInfo.FileName = "cmd.exe";
+                linkStartInfo.Arguments = $"/s /c \" \"{VCVarsAll}\" {VCArch} && \"link.exe\" @link.rsp /UseProfile:PGD=coreclr.pgd";
+                linkStartInfo.WorkingDirectory = CurrentReproDirectory;
+                linkStartInfo.CreateNoWindow = true;
+                linkStartInfo.RedirectStandardOutput = true;
+                linkStartInfo.RedirectStandardError = true;
+
+                int exitCode;
+                if ((exitCode = Execute(linkStartInfo)) != 0)
                 {
-                    Arguments = @"@link.rsp /UseProfile:PGD=coreclr.pgd",
-                    WorkingDirectory = WritableReproPath
-                };
-                Execute(linkStartInfo);
+                    throw new InvalidOperationException($"Link command failed.  Exit code: {exitCode}");
+                }
                 Log("End: Compile the remaining modules with PGO.");
 
                 // Copy coreclr.dll into the test bed.
                 Log("Start: Update coreclr.dll in testbed.");
-                File.Copy(Path.Combine(WritableReproPath, "coreclr.dll"), Path.Combine(TestBedPath, "coreclr.dll"));
+                File.Copy(Path.Combine(CurrentReproDirectory, "coreclr.dll"), Path.Combine(CoreRootPath, "coreclr.dll"));
                 Log("End: Update coreclr.dll in testbed.");
 
-                // Run the test two times - if neither fails, consider it a pass.
+                // Run the test multiple times.
                 Log("Start: Execute tests.");
                 bool testsPassed = ExecuteTests();
                 Log("End: Execute tests.");
@@ -138,16 +149,27 @@ namespace PGO_BinarySearch
             return Convert.ToInt32(lastPath);
         }
 
-        private static void CompileWithLTCG(string filePath)
+        private static void CompileWithLTCG(string fileName)
         {
+            // Prepend the full path.
+            string filePath = Path.Combine(CurrentReproDirectory, fileName);
+
             // link.exe /cvtcil {srcObj} /out:{destObj}
             string destFilePath = Path.Combine(Path.GetDirectoryName(filePath), "temp.obj");
-            ProcessStartInfo linkStartInfo = new ProcessStartInfo("link.exe")
+
+            ProcessStartInfo linkStartInfo = new ProcessStartInfo();
+            linkStartInfo.FileName = "cmd.exe";
+            linkStartInfo.Arguments = $"/s /c \" \"{VCVarsAll}\" {VCArch} && \"link.exe\" /cvtcil \"{filePath}\" /out:\"{destFilePath}\"";
+            linkStartInfo.WorkingDirectory = CurrentReproDirectory;
+            linkStartInfo.CreateNoWindow = true;
+            linkStartInfo.RedirectStandardOutput = true;
+            linkStartInfo.RedirectStandardError = true;
+
+            int exitCode;
+            if((exitCode = Execute(linkStartInfo)) != 0)
             {
-                Arguments = string.Format("/cvtcil {0}, /out:{1}", filePath, destFilePath),
-                WorkingDirectory = WritableReproPath
-            };
-            Execute(linkStartInfo);
+                throw new InvalidOperationException($"Link command failed.  Exit code: {exitCode}");
+            }
 
             // move {destObj} {srcObj}
             File.Copy(destFilePath, filePath, true);
@@ -156,13 +178,19 @@ namespace PGO_BinarySearch
             File.Delete(destFilePath);
         }
 
-        private static void Execute(ProcessStartInfo startInfo)
+        private static int Execute(ProcessStartInfo startInfo)
         {
-            Console.WriteLine("Executing {0} {1}", startInfo.FileName, startInfo.Arguments);
+            Log("Executing {0} {1}", startInfo.FileName, startInfo.Arguments);
+            Stopwatch s = Stopwatch.StartNew();
+            int exitCode;
             using (Process p = Process.Start(startInfo))
             {
                 p.WaitForExit();
+                exitCode = p.ExitCode;
             }
+            s.Stop();
+            Log($"Completed in {s.Elapsed.ToString()}");
+            return exitCode;
         }
 
         private static bool ExecuteTests()
@@ -201,7 +229,7 @@ namespace PGO_BinarySearch
         private static void WriteMarker(bool success)
         {
             string fileName = success ? SuccessMarkerFileName : FailMarkerFileName;
-            string filePath = Path.Combine(WritableReproPath, fileName);
+            string filePath = Path.Combine(CurrentReproDirectory, fileName);
             using (StreamWriter writer = new StreamWriter(filePath))
             {
                 writer.Write("\n");
