@@ -1,42 +1,51 @@
 using System;
 using System.Threading.Tasks;
+using System.IO;
 
 using EventPipe;
 
 namespace eventpipe_onoff
 {
-    class Program
+    class EventPipeSmoke
     {
+        private static int allocIterations = 10000;
+        private static bool keepOutput = true;
+
         static void Main(string[] args)
         {
             // Start the allocator thread.
-            Task t = new Task(new Action(Allocator));
-            t.Start();
+            //Task t = new Task(new Action(Allocator));
+            //t.Start();
 
-            int iteration = 1;
-            while(true)
+            string outputFilename = string fileName = System.IO.Path.GetTempPath() + Guid.NewGuid().ToString() + ".netperf";
+            TraceConfiguration config = CreateConfiguration(outputFilename);
+
+            Console.WriteLine("\tStart: Enable tracing.");
+            TraceControl.Enable(config);
+            Console.WriteLine("\tEnd: Enable tracing.\n");
+
+            Console.WriteLine("\tStart: Allocation.");
+            // Allocate for allocIterations iterations.
+            for(int i=0; i<allocIterations; i++)
             {
-                string outputFile = string.Format("/home/brianrob/src/coretests/eventpipe_onoff/file-{0}.netperf", iteration);
-                TraceConfiguration config = CreateConfiguration(outputFile);
+                GC.KeepAlive(new object());
+            }
+            Console.WriteLine("\tEnd: Allocation.\n");
 
-                Console.WriteLine("Iteration {0}:", iteration++);
-                Console.WriteLine("\tStart: Enable tracing.");
-                TraceControl.Enable(config);
-                Console.WriteLine("\tEnd: Enable tracing.\n");
+            Console.WriteLine("\tStart: Disable tracing.");
+            TraceControl.Disable();
+            Console.WriteLine("\tEnd: Disable tracing.\n");
 
-                Console.WriteLine("\tStart: Allocation.");
-                // Allocate for 1000000 iterations.
-                for(int i=0; i<1000000; i++)
-                {
-                    GC.KeepAlive(new object());
-                }
-                Console.WriteLine("\tEnd: Allocation.\n");
+            FileInfo outputMeta = new FileInfo(outputFilename);
+            Console.WriteLine("\tCreated {0} bytes of data", FileInfo.Length);
 
-                Console.WriteLine("\tStart: Disable tracing.");
-                TraceControl.Disable();
-                Console.WriteLine("\tEnd: Disable tracing.\n");
-
-                System.IO.File.Delete(outputFile);
+            if (keepOutput)
+            {
+                Console.WriteLine(String.Fromat("\tOutput file: {0}", outputFilename));
+            }
+            else
+            {
+                System.IO.File.Delete(outputFilename);
             }
         }
 
@@ -48,14 +57,14 @@ namespace eventpipe_onoff
             }
         }
 
-        private static TraceConfiguration CreateConfiguration(string outputFile)
+        private static TraceConfiguration CreateConfiguration(string outputFilename)
         {
             // Setup the configuration values.
             uint circularBufferMB = 1024; // 1 GB
             uint level = 5; // Verbose
 
             // Create a new instance of EventPipeConfiguration.
-            TraceConfiguration config = new TraceConfiguration(outputFile, circularBufferMB);
+            TraceConfiguration config = new TraceConfiguration(outputFilename, circularBufferMB);
             // Setup the provider values.
             // Public provider.
             string providerName = "e13c0d23-ccbc-4e12-931b-d9cc2eee27e4";
